@@ -1,0 +1,11 @@
+2025/08/16-21:50:16.019 c5b0 Reusing MANIFEST C:\Users\mhabd\OneDrive\Documents\GitHub\scrapeBOOM\BOOM\binance_profile\Default\IndexedDB\https_www.binance.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/08/16-21:50:16.019 c5b0 Recovering log #3
+2025/08/16-21:50:16.019 c5b0 Reusing old log C:\Users\mhabd\OneDrive\Documents\GitHub\scrapeBOOM\BOOM\binance_profile\Default\IndexedDB\https_www.binance.com_0.indexeddb.leveldb/000003.log 
+2025/08/16-21:50:32.173 b068 Level-0 table #5: started
+2025/08/16-21:50:32.177 b068 Level-0 table #5: 142182 bytes OK
+2025/08/16-21:50:32.178 b068 Delete type=0 #3
+2025/08/16-21:50:32.178 b068 Manual compaction at level-0 from '\x00\x0e\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x0f\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/08/16-21:50:32.179 c5b0 Level-0 table #7: started
+2025/08/16-21:50:32.180 c5b0 Level-0 table #7: 1160 bytes OK
+2025/08/16-21:50:32.181 c5b0 Delete type=0 #4
+2025/08/16-21:50:32.181 c5b0 Manual compaction at level-0 from '\x00\x0f\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x10\x00\x00\x00' @ 0 : 0; will stop at (end)

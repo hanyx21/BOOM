@@ -1,0 +1,8 @@
+2025/08/16-21:49:27.917 8c98 Reusing MANIFEST C:\Users\mhabd\OneDrive\Documents\GitHub\scrapeBOOM\BOOM\binance_profile\Default\Local Storage\leveldb/MANIFEST-000001
+2025/08/16-21:49:27.922 8c98 Recovering log #13
+2025/08/16-21:49:27.922 8c98 Level-0 table #16: started
+2025/08/16-21:49:27.928 8c98 Level-0 table #16: 25066 bytes OK
+2025/08/16-21:49:27.929 8c98 Recovering log #16
+2025/08/16-21:49:27.933 8c98 Reusing old log C:\Users\mhabd\OneDrive\Documents\GitHub\scrapeBOOM\BOOM\binance_profile\Default\Local Storage\leveldb/000016.log 
+2025/08/16-21:49:27.934 8c98 Delete type=0 #13
+2025/08/16-21:49:27.935 8c98 Delete type=2 #17
