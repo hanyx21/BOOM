@@ -1,4 +1,4 @@
-# binance_login_passkey_to_wallet.py
+# binance_passkey_buy_btc.py
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from dotenv import load_dotenv
 import os, time, pathlib, re
@@ -6,8 +6,10 @@ import os, time, pathlib, re
 # ---------- CONFIG ----------
 PROFILE_DIR = "binance_profile"
 LOGIN_URL = "https://accounts.binance.com/en/login"
-DASHBOARD_URL = "https://www.binance.com/en/my/dashboard"
-PASSKEY_WAIT_SECONDS = 30
+TRADE_URL = "https://www.binance.com/en/trade/BTC_USDT?type=spot"
+PASSKEY_WAIT_SECONDS = 20
+AMOUNT_USDT = 1500            # ce que tu veux acheter en USDT
+EXECUTE_ORDER = True          # mets False pour dry-run (ne pas cliquer "Buy")
 USER_AGENT_DESKTOP = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -17,13 +19,13 @@ USER_AGENT_DESKTOP = (
 # ---------- ENV ----------
 load_dotenv()
 EMAIL = os.getenv("BINANCE_EMAIL")
-assert EMAIL, "Ajoute BINANCE_EMAIL dans ton .env (pas besoin de mot de passe pour passkey)."
+assert EMAIL, "Ajoute BINANCE_EMAIL dans ton .env (passkey, pas besoin de mot de passe)."
 
 # ---------- UTILS ----------
 def snap(page, name):
     pathlib.Path("debug").mkdir(exist_ok=True)
-    page.screenshot(path=f"debug/{name}.png", full_page=True)
     try:
+        page.screenshot(path=f"debug/{name}.png", full_page=True)
         with open(f"debug/{name}.html", "w", encoding="utf-8") as f:
             f.write(page.content())
     except Exception:
@@ -40,21 +42,28 @@ def click_if_visible(page, selectors, timeout_ms=3000):
             pass
     return False
 
+def find_first_visible(page, selectors):
+    for sel in selectors:
+        loc = page.locator(sel).first
+        if loc.count() and loc.is_visible():
+            return loc
+    return None
+
 with sync_playwright() as p:
     ctx = p.chromium.launch_persistent_context(
         user_data_dir=PROFILE_DIR,
         headless=False,
         args=["--start-maximized", "--disable-blink-features=AutomationControlled"],
         user_agent=USER_AGENT_DESKTOP,
-        # channel="chrome",  # décommente si tu veux forcer Chrome installé
+        # channel="chrome",  # décommente si tu veux forcer Chrome
     )
     page = ctx.new_page()
 
-    # 1) Aller à la page de login
+    # --- 1) LOGIN (email + passkey) ---
     page.goto(LOGIN_URL, wait_until="networkidle")
 
     try:
-        # Bannière cookies éventuelle
+        # cookies éventuels
         click_if_visible(page, [
             'button:has-text("Accept all")',
             'button:has-text("Accept All")',
@@ -62,52 +71,116 @@ with sync_playwright() as p:
             '[data-testid="privacy-accept"]',
         ], timeout_ms=2000)
 
-        # 2) Entrer l'email (champ username) puis "Suivant"
-        username = page.locator('[data-e2e="input-username"], input[name="username"]').first
-        username.wait_for(state="visible", timeout=10000)
+        username = find_first_visible(page, [
+            '[data-e2e="input-username"]',
+            'input[name="username"]',
+            'input[autocomplete="username"]',
+        ])
+        if not username:
+            snap(page, "no_username_field")
+            raise PWTimeout("Champ email introuvable.")
+
+        username.click()
         username.fill(EMAIL)
 
-        next_btn = page.locator('[data-e2e="btn-accounts-form-submit"], button:has-text("Suivant"), button:has-text("Next")').first
+        next_btn = find_first_visible(page, [
+            '[data-e2e="btn-accounts-form-submit"]',
+            'button:has-text("Suivant")',
+            'button:has-text("Next")',
+        ])
+        if not next_btn:
+            snap(page, "no_next_button_email")
+            raise PWTimeout("Bouton Suivant introuvable.")
         next_btn.click()
 
-        print(f"🟡 Attente {PASSKEY_WAIT_SECONDS}s pour que tu valides la **clé d’accès** (Windows Hello / YubiKey / TouchID)…")
+        print(f"🟡 Attente {PASSKEY_WAIT_SECONDS}s pour valider la clé d’accès…")
         time.sleep(PASSKEY_WAIT_SECONDS)
 
     except PWTimeout as e:
-        print(f"⛔ Timeout pendant la phase email/passkey: {e}")
-        snap(page, "exception_email")
-    
-    # 3) Aller au dashboard wallet
-    try:
-        page.goto(DASHBOARD_URL, wait_until="networkidle")
+        print(f"⛔ Timeout phase login: {e}")
+        snap(page, "exception_login")
 
-        # 4) Vérifier que la session est bien active (icône profil ou URL dashboard)
-        ok = False
-        for sel in [
-            'img[alt="avatar"]',
-            '[data-bn-type="profileIcon"]',
-            '[data-testid="header-profile"]',
-        ]:
-            loc = page.locator(sel).first
+    # --- 2) Ouvrir la page de trade BTC/USDT (spot) ---
+    try:
+        page.goto(TRADE_URL, wait_until="networkidle")
+    except PWTimeout:
+        print("⚠️ Timeout pendant l'ouverture de la page trade.")
+        snap(page, "trade_open_timeout")
+
+    # --- 3) S'assurer qu'on est en onglet BUY + type MARKET ---
+    try:
+        # onglet Buy
+        click_if_visible(page, [
+            '[data-testid="BuyTab"]',
+            'div[role="tab"]:has-text("Buy")',
+            'div[role="tab"]:has-text("Acheter")',
+        ], timeout_ms=2000)
+
+        # switch vers Market (FR/EN)
+        click_if_visible(page, [
+            'span.trade-common-link:has-text("Market")',
+            'span.trade-common-link:has-text("Marché")',
+        ], timeout_ms=2000)
+
+        time.sleep(0.5)  # laisse basculer le formulaire
+
+        # --- 4) Renseigner Total = AMOUNT_USDT ---
+        total_input = find_first_visible(page, [
+            '#FormRow-BUY-total',
+            'input#FormRow-BUY-total',
+            'input[name="total"]',
+            'label:has-text("Total") ~ div input',
+            'label:has-text("Total") + * input',
+        ])
+        if not total_input:
+            snap(page, "no_total_input")
+            raise PWTimeout("Champ Total (USDT) introuvable.")
+
+        total_input.click()
+        try:
+            total_input.fill("")  # vider si pré-rempli
+        except Exception:
+            pass
+        # taper pour déclencher tous les events
+        total_input.type(str(AMOUNT_USDT), delay=30)
+
+        # --- 5) Cliquer Buy ---
+        buy_btn = find_first_visible(page, [
+            '#orderformBuyBtn',
+            '[data-testid="button-spot-buy"]',
+            'button:has-text("Buy")',
+            'button:has-text("Acheter")',
+        ])
+        if not buy_btn:
+            snap(page, "no_buy_button")
+            raise PWTimeout("Bouton Buy introuvable.")
+
+        # activer si debounce UI
+        for _ in range(25):
             try:
-                if loc.count() and loc.is_visible(timeout=4000):
-                    ok = True
+                if buy_btn.is_enabled():
                     break
             except Exception:
                 pass
+            time.sleep(0.2)
 
-        if not ok and re.search(r"/my/dashboard", page.url, re.I):
-            ok = True
-
-        if ok:
-            print("✅ Connecté et sur le dashboard wallet.")
+        if EXECUTE_ORDER and buy_btn.is_enabled():
+            buy_btn.click()
+            # popups éventuels (confirmations)
+            click_if_visible(page, [
+                'button:has-text("Confirm")',
+                'button:has-text("Place Order")',
+                'button:has-text("I understand")',
+                'button:has-text("Compris")',
+            ], timeout_ms=2000)
+            print(f"✅ Tentative d’ordre MARKET Buy BTC pour {AMOUNT_USDT} USDT envoyée.")
         else:
-            print("⚠️ Pas certain d’être connecté (peut-être redirigé vers login). Capture enregistrée.")
-            snap(page, "dashboard_uncertain")
+            print("🛈 Dry-run (EXECUTE_ORDER=False) OU bouton Buy désactivé — aucune exécution.")
+            snap(page, "dry_run_or_disabled")
 
-    except PWTimeout:
-        print("⚠️ Timeout en allant sur le dashboard. Capture enregistrée.")
-        snap(page, "dashboard_timeout")
+    except PWTimeout as e:
+        print(f"⛔ Timeout sur la phase trade: {e}")
+        snap(page, "exception_trade")
 
     input("Press Enter to close…")
     ctx.close()
