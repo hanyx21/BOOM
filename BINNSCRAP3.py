@@ -1,4 +1,4 @@
-# binance_passkey_buy_btc.py
+# binance_passkey_buy_btc_retry.py
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from dotenv import load_dotenv
 import os, time, pathlib, re
@@ -8,8 +8,8 @@ PROFILE_DIR = "binance_profile"
 LOGIN_URL = "https://accounts.binance.com/en/login"
 TRADE_URL = "https://www.binance.com/en/trade/BTC_USDT?type=spot"
 PASSKEY_WAIT_SECONDS = 20
-AMOUNT_USDT = 1500            # ce que tu veux acheter en USDT
-EXECUTE_ORDER = True          # mets False pour dry-run (ne pas cliquer "Buy")
+AMOUNT_USDT = 1500
+EXECUTE_ORDER = True
 USER_AGENT_DESKTOP = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -19,7 +19,7 @@ USER_AGENT_DESKTOP = (
 # ---------- ENV ----------
 load_dotenv()
 EMAIL = os.getenv("BINANCE_EMAIL")
-assert EMAIL, "Ajoute BINANCE_EMAIL dans ton .env (passkey, pas besoin de mot de passe)."
+assert EMAIL, "Ajoute BINANCE_EMAIL dans ton .env"
 
 # ---------- UTILS ----------
 def snap(page, name):
@@ -49,6 +49,27 @@ def find_first_visible(page, selectors):
             return loc
     return None
 
+def goto_with_retry(page, url, first_wait="domcontentloaded"):
+    """
+    Navigates to url. If Binance triggers another auto-navigation (e.g., to /my/dashboard),
+    retry once after waiting for things to settle.
+    """
+    try:
+        page.goto(url, wait_until=first_wait)
+        return
+    except Exception as e:
+        if "interrupted by another navigation" in str(e):
+            # Let the current redirect complete, then retry
+            try:
+                page.wait_for_load_state("load", timeout=15000)
+                page.wait_for_url(re.compile(r"^https://www\.binance\.com/.*"), timeout=15000)
+            except Exception:
+                pass
+            time.sleep(0.8)
+            page.goto(url, wait_until="networkidle")
+        else:
+            raise
+
 with sync_playwright() as p:
     ctx = p.chromium.launch_persistent_context(
         user_data_dir=PROFILE_DIR,
@@ -61,7 +82,6 @@ with sync_playwright() as p:
 
     # --- 1) LOGIN (email + passkey) ---
     page.goto(LOGIN_URL, wait_until="networkidle")
-
     try:
         # cookies éventuels
         click_if_visible(page, [
@@ -96,35 +116,39 @@ with sync_playwright() as p:
         print(f"🟡 Attente {PASSKEY_WAIT_SECONDS}s pour valider la clé d’accès…")
         time.sleep(PASSKEY_WAIT_SECONDS)
 
+        # ⚠️ NOUVEAU: attendre la fin de la redirection post-login (quitte accounts.*)
+        try:
+            page.wait_for_url(re.compile(r"^https://www\.binance\.com/.*"), timeout=30000)
+        except Exception:
+            # Si toujours sur accounts.*, ce n'est pas bloquant; on gèrera avec retry sur le goto
+            pass
+        page.wait_for_load_state("domcontentloaded")
+
     except PWTimeout as e:
         print(f"⛔ Timeout phase login: {e}")
         snap(page, "exception_login")
 
-    # --- 2) Ouvrir la page de trade BTC/USDT (spot) ---
-    try:
-        page.goto(TRADE_URL, wait_until="networkidle")
-    except PWTimeout:
-        print("⚠️ Timeout pendant l'ouverture de la page trade.")
-        snap(page, "trade_open_timeout")
+    # --- 2) Aller vers BTC/USDT avec retry si navigation interrompue ---
+    goto_with_retry(page, TRADE_URL, first_wait="domcontentloaded")
 
-    # --- 3) S'assurer qu'on est en onglet BUY + type MARKET ---
+    # --- 3) S'assurer BUY + MARKET ---
     try:
         # onglet Buy
         click_if_visible(page, [
             '[data-testid="BuyTab"]',
             'div[role="tab"]:has-text("Buy")',
             'div[role="tab"]:has-text("Acheter")',
-        ], timeout_ms=2000)
+        ], timeout_ms=3000)
 
-        # switch vers Market (FR/EN)
+        # basculer en Market
         click_if_visible(page, [
             'span.trade-common-link:has-text("Market")',
             'span.trade-common-link:has-text("Marché")',
-        ], timeout_ms=2000)
+        ], timeout_ms=3000)
 
-        time.sleep(0.5)  # laisse basculer le formulaire
+        time.sleep(0.5)
 
-        # --- 4) Renseigner Total = AMOUNT_USDT ---
+        # --- 4) Renseigner Total (USDT) ---
         total_input = find_first_visible(page, [
             '#FormRow-BUY-total',
             'input#FormRow-BUY-total',
@@ -138,13 +162,12 @@ with sync_playwright() as p:
 
         total_input.click()
         try:
-            total_input.fill("")  # vider si pré-rempli
+            total_input.fill("")
         except Exception:
             pass
-        # taper pour déclencher tous les events
         total_input.type(str(AMOUNT_USDT), delay=30)
 
-        # --- 5) Cliquer Buy ---
+        # --- 5) Bouton Buy ---
         buy_btn = find_first_visible(page, [
             '#orderformBuyBtn',
             '[data-testid="button-spot-buy"]',
@@ -155,7 +178,7 @@ with sync_playwright() as p:
             snap(page, "no_buy_button")
             raise PWTimeout("Bouton Buy introuvable.")
 
-        # activer si debounce UI
+        # laisser le temps aux validations d'activer le bouton
         for _ in range(25):
             try:
                 if buy_btn.is_enabled():
@@ -166,7 +189,6 @@ with sync_playwright() as p:
 
         if EXECUTE_ORDER and buy_btn.is_enabled():
             buy_btn.click()
-            # popups éventuels (confirmations)
             click_if_visible(page, [
                 'button:has-text("Confirm")',
                 'button:has-text("Place Order")',
@@ -175,7 +197,7 @@ with sync_playwright() as p:
             ], timeout_ms=2000)
             print(f"✅ Tentative d’ordre MARKET Buy BTC pour {AMOUNT_USDT} USDT envoyée.")
         else:
-            print("🛈 Dry-run (EXECUTE_ORDER=False) OU bouton Buy désactivé — aucune exécution.")
+            print("🛈 Dry-run (EXECUTE_ORDER=False) ou bouton désactivé — aucune exécution.")
             snap(page, "dry_run_or_disabled")
 
     except PWTimeout as e:
