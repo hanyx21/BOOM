@@ -1,0 +1,7 @@
+pandas
+numpy
+ccxt
+ta-lib
+python-dotenv
+prometheus_client
+requests
